@@ -3,5 +3,6 @@ export enum Constants {
   FEE_PER_BYTES = 0.00002,
   DIFFICULTY = 4,
   NONCE = 0,
-  MINING_INTERVAL = 7 * 60 * 1000
+  MINING_INTERVAL = 7 * 60 * 1000,
+  VALIDITY_CHECK_INTERVAL = 2 * 60 * 1000
 }

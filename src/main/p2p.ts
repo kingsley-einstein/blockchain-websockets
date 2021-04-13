@@ -19,14 +19,20 @@ export class P2P {
   constructor(chain?: BlockChain) {
     this.chain = chain || new BlockChain();
     this.peers = process.env.PEERS ? process.env.PEERS.split(",") : [];
-    this.port = process.env.P2P_PORT ? parseInt(process.env.P2P_PORT) : 5001;
-    this.listen();
-    this.connectToPeers();
+    this.port = process.env.P2P_PORT
+      ? parseInt(process.env.P2P_PORT)
+      : Math.floor(Math.random() * 5001);
+    // this.listen();
+    // this.connectToPeers();
   }
 
-  private listen() {
+  listen() {
     const server = new Ws.Server({ port: this.port });
-    server.on("connection", socket => this.initConnection(socket));
+    log(chalk.blue(`Websocket running on ${this.port}`));
+    server.on("connection", socket => {
+      this.initConnection(socket);
+      this.sendChainToNewlyConnectedPeer(socket);
+    });
     server.on("error", err =>
       log(
         chalk.red(
@@ -47,11 +53,12 @@ export class P2P {
     this.handleSocketEvents(socket);
     this.handleMessages(socket);
     this.clients = _.concat(this.clients, socket);
-    this.sendChainToNewlyConnectedPeer(socket);
+    // this.sendChainToNewlyConnectedPeer(socket);
   }
 
   private addPeer(url: string) {
     const socket = new Ws(url);
+    log(chalk.blue(`Adding peer at ${url}`));
     this.initConnection(socket);
   }
 
@@ -62,6 +69,7 @@ export class P2P {
     socket.on("error", () =>
       log(chalk.red(`Error occured with peer: ${socket.url}`))
     );
+    socket.on("close", () => this.removeClient(socket));
   }
 
   private handleMessages(socket: Ws) {
@@ -69,18 +77,39 @@ export class P2P {
       const messageObject: Message = JSON.parse(message as string);
 
       switch (messageObject.type) {
-        case MessageType.CHAIN:
-          log(chalk.green("==== Received chain ===="));
+        case MessageType.CHAIN: {
+          log(
+            chalk.green(
+              "==== Received message ====\n",
+              JSON.stringify(messageObject, null, 2)
+            )
+          );
           this.replaceChain(messageObject.body as Blocks);
           break;
-        case MessageType.BLOCK:
-          log(chalk.green("==== Received block ===="));
+        }
+        case MessageType.BLOCK: {
+          log(
+            chalk.green(
+              "==== Received message ====\n",
+              JSON.stringify(messageObject, null, 2)
+            )
+          );
           this.addBlock(messageObject.body as Block);
+          this.chain.removeBlockedTransactionFromPool(
+            messageObject.body as Block
+          );
           break;
-        case MessageType.TRANSACTION:
-          log(chalk.green("==== Received transaction ===="));
+        }
+        case MessageType.TRANSACTION: {
+          log(
+            chalk.green(
+              "==== Received message ====\n",
+              JSON.stringify(messageObject, null, 2)
+            )
+          );
           this.addTransactionToPool(messageObject.body as Transaction);
           break;
+        }
         default:
           log(chalk.red("==== Unknown message ===="));
           break;
@@ -92,7 +121,7 @@ export class P2P {
     for (const client of this.clients) client.send(JSON.stringify(message));
   }
 
-  sendChainToNewlyConnectedPeer(peer: Ws) {
+  private sendChainToNewlyConnectedPeer(peer: Ws) {
     peer.send(
       JSON.stringify({
         type: MessageType.CHAIN,
@@ -101,7 +130,13 @@ export class P2P {
     );
   }
 
-  addTransactionToPool(tx: Transaction) {
+  private removeClient(socket: Ws) {
+    log(chalk.yellow(`==== Removing peer ==== \n ${socket.url}`));
+    this.peers.splice(_.indexOf(this.peers, socket.url), 1);
+    this.clients.splice(_.indexOf(this.clients, socket), 1);
+  }
+
+  private addTransactionToPool(tx: Transaction) {
     if (
       this.chain.checkDuplicateTransaction(tx) ||
       this.chain.checkBlockHasTransaction(tx)
@@ -111,17 +146,14 @@ export class P2P {
     this.chain.addTransactionToPool(tx);
   }
 
-  addBlock(block: Block) {
+  private addBlock(block: Block) {
     if (this.chain.checkDuplicateBlock(block)) return;
 
     this.chain.addBlock(block);
   }
 
-  replaceChain(blocks: Blocks) {
-    if (_.gt(blocks.length, this.chain.getChain().length)) {
-      log(chalk.blue("==== Replacing chain ===="));
-      this.chain.replaceChain(blocks);
-    }
+  private replaceChain(blocks: Blocks) {
+    this.chain.replaceChain(blocks);
   }
 
   mineBlocks() {
@@ -130,5 +162,12 @@ export class P2P {
       this.chain.addBlock(block);
       this.broadcast({ type: MessageType.BLOCK, body: block });
     }, Constants.MINING_INTERVAL);
+  }
+
+  checkValidity() {
+    setInterval(() => {
+      const isValid = this.chain.isChainValid();
+      log(chalk.blue(`Validity ===> ${isValid ? "Valid" : "Not Valid"}`));
+    }, Constants.VALIDITY_CHECK_INTERVAL);
   }
 }

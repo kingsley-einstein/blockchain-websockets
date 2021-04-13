@@ -50,11 +50,11 @@ export class BlockChain {
     return _.last(this.chain);
   }
 
-  private adjustDifficulty(lastBlock: Block, currentBlock: Block): number {
-    const difficulty = currentBlock.difficulty;
-    return lastBlock.timestamp + Constants.MINING_RATE < currentBlock.timestamp
-      ? difficulty - 1
-      : difficulty + 1;
+  private adjustDifficulty(lastBlock: Block, currentTime: number): number {
+    const difficulty = lastBlock.difficulty;
+    return lastBlock.timestamp + Constants.MINING_RATE > currentTime
+      ? difficulty + 1
+      : difficulty - 1;
   }
 
   signTransaction(txn: Transaction | string, pk: string): Array<Transaction> {
@@ -87,6 +87,7 @@ export class BlockChain {
 
   addTransactionToPool(txn: Transaction) {
     this.transactionPool = _.concat(this.transactionPool, txn);
+    log(chalk.blue("Adding new transaction to pool: " + txn.hash));
     return _.find(
       this.transactionPool,
       transaction => transaction.hash === txn.hash
@@ -101,6 +102,10 @@ export class BlockChain {
   mineBlock(): Block {
     const lastBlock = this.getLastBlock();
 
+    log(chalk.blue(`Mining new block from ancestor: ${lastBlock.hash}`));
+
+    let iteration = 0;
+
     let block: Block = {
       index: lastBlock.index + 1,
       timestamp: Date.now(),
@@ -112,18 +117,22 @@ export class BlockChain {
       merkleRoot: calculateMerkleRoot(this.transactionPool)
     };
 
-    while (
+    do {
+      iteration++;
+      log(chalk.yellow("Running PoW on iteration: " + iteration));
+      const currentTime = Date.now();
+      block.nonce = block.nonce + 1;
+      block.difficulty = this.adjustDifficulty(lastBlock, currentTime);
+      block.timestamp = currentTime;
+      block = calculateBlockHash(block);
+    } while (
       !_.isEqual(
         block.hash.substring(0, block.difficulty),
-        Array(block.difficulty + 1).join("0")
+        "0".repeat(block.difficulty)
       )
-    ) {
-      block.nonce = block.nonce + 1;
-      block.difficulty = this.adjustDifficulty(lastBlock, block);
-      block.timestamp = Date.now();
-      block = calculateBlockHash(block);
-    }
-
+    );
+    this.addBlock(block);
+    this.transactionPool = [];
     return block;
   }
 
@@ -186,30 +195,46 @@ export class BlockChain {
     return [...this.chain];
   }
 
+  getPendingTransactions() {
+    return [...this.transactionPool];
+  }
+
   getBlockByHash(hash: string) {
     return _.find(this.chain, block => _.isEqual(block.hash, hash));
   }
 
   checkDuplicateBlock(block: Block) {
+    log(chalk.blue("Checking block for duplicity"));
     const exists = _.find(
       this.chain,
       b =>
         _.isEqual(b.hash, block.hash) ||
-        _.isEqual(block.merkleRoot, b.merkleRoot)
+        (_.gt(b.merkleRoot.trim().length, 0) &&
+          _.isEqual(block.merkleRoot, b.merkleRoot))
     );
 
-    return !_.isNull(exists);
+    if (!!exists) {
+      log(chalk.red("Duplicate block found: " + exists.hash));
+    }
+
+    return !!exists;
   }
 
   checkDuplicateTransaction(transaction: Transaction) {
+    log(chalk.blue("Checking transaction for duplicity"));
     const exists = _.find(this.transactionPool, txn =>
       _.isEqual(transaction.hash, txn.hash)
     );
 
-    return !_.isNull(exists);
+    if (!!exists) {
+      log(chalk.red("Duplicate transaction found: " + exists.hash));
+    }
+
+    return !!exists;
   }
 
   checkBlockHasTransaction(transaction: Transaction) {
+    log(chalk.blue("Checking transaction for duplicity"));
     const exists = _.find(this.chain, block =>
       _.includes(
         _.map(block.data, tx => tx.hash),
@@ -217,6 +242,27 @@ export class BlockChain {
       )
     );
 
-    return !_.isNull(exists);
+    if (!!exists) {
+      log(chalk.red("Duplicate transaction found: " + exists.hash));
+    }
+
+    return !!exists;
+  }
+
+  removeBlockedTransactionFromPool(block: Block) {
+    for (const transaction of block.data) {
+      const exists = _.find(
+        _.map(this.transactionPool, txn => txn.hash),
+        hash => _.isEqual(hash, transaction.hash)
+      );
+
+      if (!!exists) {
+        const index = _.indexOf(
+          this.transactionPool,
+          _.find(this.transactionPool, txn => _.isEqual(txn.hash, exists))
+        );
+        this.transactionPool.splice(index, 1);
+      }
+    }
   }
 }

@@ -98,10 +98,12 @@ export const calculateMerkleRoot = (transactions: Transactions): string => {
   const root = [_.map(transactions, tx => tx.hash)];
 
   log(
-    chalk.blue(`Running merkle hash derivation for tree: ${_.toString(root)}`)
+    chalk.blue(
+      `Running merkle hash derivation for tree: ${JSON.stringify(root)}`
+    )
   );
 
-  while (!_.gt(_.head(root), 1)) {
+  while (_.gt(_.head(root).length, 1)) {
     let temp: Array<string> = [];
 
     for (let i = 0; i < _.head(root).length; i += 2) {
